@@ -1,103 +1,112 @@
 import pandas as pd
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, VotingRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error
 import numpy as np
-from sklearn.model_selection import cross_val_predict
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.ensemble import VotingRegressor
-from sklearn.linear_model import Lasso
 from xgboost import XGBRegressor
+import seaborn as sns
 
-from functions.removeOutliers import remove_outliers
-from functions.create_xgboost_model import create_xgboost_model
-from functions.create_ensemble_model import create_ensemble_model
-from functions.tune_hyperparameters import tune_hyperparameters
-
+# Load and preprocess data
 def load_data(file_path):
-    """Load data from CSV file."""
-    return pd.read_csv(file_path)
+    data = pd.read_csv(file_path)
+    return data
 
-def prepare_data(data):
-    """Separate features and target."""
-    X = data.drop('price', axis=1)
+def preprocess_data(data):
+    # Convert categorical data to numerical if necessary
+    data = pd.get_dummies(data, columns=['area'], drop_first=True)
+    
+    # Handle outliers in the target variable
+    q1 = data['price'].quantile(0.25)
+    q3 = data['price'].quantile(0.75)
+    iqr = q3 - q1
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    data = data[(data['price'] >= lower_bound) & (data['price'] <= upper_bound)]
+    
+    X = data.drop(columns=['id', 'price'])
     y = data['price']
-    return X, y
+    
+    # Scale the features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    return X_scaled, y
 
-def create_preprocessor():
-    """Create a preprocessor for numeric and categorical data."""
-    numeric_features = ['floor', 'buildingAge', 'floorCount', 'room2', 'Baths', 'Size Area (m2)']
-    categorical_features = ['area', 'city', 'Property Type']
-    
-    return ColumnTransformer(
-        transformers=[
-            ('num', StandardScaler(), numeric_features),
-            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
-        ])
+# Split data into train and test sets
+def split_data(X, y, test_size=0.2, random_state=42):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
+    return X_train, X_test, y_train, y_test
 
+# Hyperparameter tuning using GridSearchCV
+def tune_hyperparameters(model, param_grid, X_train, y_train):
+    grid_search = GridSearchCV(estimator=model, param_grid=param_grid, cv=5, scoring='neg_mean_squared_error', n_jobs=-1)
+    grid_search.fit(X_train, y_train)
+    print("Best parameters for", type(model).__name__, grid_search.best_params_)
+    best_model = grid_search.best_estimator_
+    return best_model
 
-    
-def create_model(preprocessor):
-    """Create a pipeline with preprocessor and random forest regressor."""
-    return Pipeline([
-        ('preprocessor', preprocessor),
-        ('regressor', RandomForestRegressor(n_estimators=100, random_state=42))
-    ])
+# Train model using cross-validation with tuned hyperparameters
+def train_model(X_train, y_train):
+    rf = RandomForestRegressor(random_state=42)
+    gb = GradientBoostingRegressor(random_state=42)
+    xgb = XGBRegressor(random_state=42)
 
-def within_range(y_true, y_pred, range_percent=10):
-    """Calculate percentage of predictions within ±range_percent of actual values."""
-    lower_bound = y_true * (1 - range_percent/100)
-    upper_bound = y_true * (1 + range_percent/100)
-    within_range = np.logical_and(y_pred >= lower_bound, y_pred <= upper_bound)
-    return np.mean(within_range) * 100
-
-def evaluate_model_cv(model, X, y, cv=5):
-    """Evaluate the model using cross-validation and print metrics."""
-    # Use cross_val_predict to get predictions for all samples
-    y_pred = cross_val_predict(model, X, y, cv=cv)
-    
-    # Calculate MSE and R-squared
-    mse = np.mean((y - y_pred)**2)
-    r2 = 1 - (np.sum((y - y_pred)**2) / np.sum((y - np.mean(y))**2))
-    
-    # Calculate percentage within range
-    percent_within_range = within_range(y, y_pred)
-    
-    print(f"Cross-validation results:")
-    print(f"Mean MSE: {mse:.2f}")
-    print(f"R-squared: {r2:.2f}")
-    print(f"Percentage within 10% range: {percent_within_range:.2f}%")
-    
-    return mse, r2, percent_within_range
-
-def main():
-    # Load data
-    data = load_data('./datasets/dataset-utf8.csv')
-    
-    # Prepare data
-    X, y = prepare_data(data)
-    X, y = remove_outliers(X, y, ['Size Area (m2)'])
-    # Create preprocessor and model
-    preprocessor = create_preprocessor()
-    model = create_ensemble_model(preprocessor)
-    
-    param_grid = {
-        'ensemble__rf__n_estimators': [100, 200],
-        'ensemble__xgb__n_estimators': [100, 500, 1000],
-        'ensemble__xgb__learning_rate': [0.01, 0.05, 0.1],
-        'ensemble__lasso__alpha': [0.01, 0.1, 1]
+    # Hyperparameter tuning
+    rf_params = {
+        'n_estimators': [100, 200],
+        'max_depth': [10, 20],
+        'min_samples_split': [2, 5]
     }
-    
-    best_model = tune_hyperparameters(model, param_grid, X, y)
+    gb_params = {
+        'n_estimators': [100, 200],
+        'learning_rate': [0.1, 0.01],
+        'max_depth': [3, 5]
+    }
+    xgb_params = {
+        'n_estimators': [100, 200],
+        'learning_rate': [0.1, 0.01],
+        'max_depth': [3, 5]
+    }
 
+    rf_best = tune_hyperparameters(rf, rf_params, X_train, y_train)
+    gb_best = tune_hyperparameters(gb, gb_params, X_train, y_train)
+    xgb_best = tune_hyperparameters(xgb, xgb_params, X_train, y_train)
     
-    # Evaluate model using cross-validation
-    mse, r2, percent_within_range = evaluate_model_cv(model, X, y)
+    # Voting Regressor with tuned models
+    voting_reg = VotingRegressor([('rf', rf_best), ('gb', gb_best), ('xgb', xgb_best)])
     
-    # Train the final model on all data
-    model.fit(X, y)
+    # Cross-validation
+    scores = cross_val_score(voting_reg, X_train, y_train, cv=5, scoring='neg_mean_squared_error')
+    rmse_scores = np.sqrt(-scores)
+    print("Cross-validation RMSE scores:", rmse_scores)
+    print("Average RMSE:", rmse_scores.mean())
     
-    return model, mse, r2, percent_within_range
+    # Train the final model on the entire training set
+    voting_reg.fit(X_train, y_train)
+    return voting_reg
 
-if __name__ == "__main__":
-    model, mse, r2, percent_within_range = main()
+# Evaluate the model
+def evaluate_model(model, X_test, y_test):
+    y_pred = model.predict(X_test)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    print("Test RMSE:", rmse)
+    
+    # Calculate the percentage of predictions within 25% of the actual values
+    within_25_percent = np.abs((y_test - y_pred) / y_test) <= 0.25
+    accuracy_within_25_percent = np.mean(within_25_percent)
+    print(f"Accuracy within 25%: {accuracy_within_25_percent * 100:.2f}%")
+    
+    return rmse, accuracy_within_25_percent
+
+# Main function to run the process
+def main(file_path):
+    data = load_data(file_path)
+    X, y = preprocess_data(data)
+    X_train, X_test, y_train, y_test = split_data(X, y)
+    model = train_model(X_train, y_train)
+    evaluate_model(model, X_test, y_test)
+
+# Execute the main function
+file_path = './datasets/dataset-utf8.csv'
+main(file_path)
