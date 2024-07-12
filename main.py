@@ -46,66 +46,61 @@ def tune_hyperparameters(model, param_grid, X_train, y_train):
     best_model = grid_search.best_estimator_
     return best_model
 
-# Train model using cross-validation with tuned hyperparameters
-def train_model(X_train, y_train):
-    rf = RandomForestRegressor(random_state=42)
-    gb = GradientBoostingRegressor(random_state=42)
-    xgb = XGBRegressor(random_state=42)
-
-    # Hyperparameter tuning
-    rf_params = {
-        'n_estimators': [100, 200],
-        'max_depth': [10, 20],
-        'min_samples_split': [2, 5]
-    }
-    gb_params = {
-        'n_estimators': [100, 200],
-        'learning_rate': [0.1, 0.01],
-        'max_depth': [3, 5]
-    }
-    xgb_params = {
-        'n_estimators': [100, 200],
-        'learning_rate': [0.1, 0.01],
-        'max_depth': [3, 5]
-    }
-
-    rf_best = tune_hyperparameters(rf, rf_params, X_train, y_train)
-    gb_best = tune_hyperparameters(gb, gb_params, X_train, y_train)
-    xgb_best = tune_hyperparameters(xgb, xgb_params, X_train, y_train)
-    
-    # Voting Regressor with tuned models
-    voting_reg = VotingRegressor([('rf', rf_best), ('gb', gb_best), ('xgb', xgb_best)])
+# Train and evaluate a single model
+def train_and_evaluate_model(model, param_grid, X_train, y_train, X_test, y_test):
+    best_model = tune_hyperparameters(model, param_grid, X_train, y_train)
     
     # Cross-validation
-    scores = cross_val_score(voting_reg, X_train, y_train, cv=5, scoring='neg_mean_squared_error')
+    scores = cross_val_score(best_model, X_train, y_train, cv=5, scoring='neg_mean_squared_error')
     rmse_scores = np.sqrt(-scores)
-    print("Cross-validation RMSE scores:", rmse_scores)
-    print("Average RMSE:", rmse_scores.mean())
+    print(f"Cross-validation RMSE scores for {type(model).__name__}:", rmse_scores)
+    print(f"Average RMSE for {type(model).__name__}:", rmse_scores.mean())
     
     # Train the final model on the entire training set
-    voting_reg.fit(X_train, y_train)
-    return voting_reg
-
-# Evaluate the model
-def evaluate_model(model, X_test, y_test):
-    y_pred = model.predict(X_test)
+    best_model.fit(X_train, y_train)
+    
+    # Evaluate the model on the test set
+    y_pred = best_model.predict(X_test)
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    print("Test RMSE:", rmse)
+    print(f"Test RMSE for {type(model).__name__}:", rmse)
     
     # Calculate the percentage of predictions within 25% of the actual values
     within_25_percent = np.abs((y_test - y_pred) / y_test) <= 0.25
     accuracy_within_25_percent = np.mean(within_25_percent)
-    print(f"Accuracy within 25%: {accuracy_within_25_percent * 100:.2f}%")
+    print(f"Accuracy for {type(model).__name__}: {accuracy_within_25_percent * 100:.2f}%")
     
-    return rmse, accuracy_within_25_percent
+    return best_model
 
 # Main function to run the process
 def main(file_path):
     data = load_data(file_path)
     X, y = preprocess_data(data)
     X_train, X_test, y_train, y_test = split_data(X, y)
-    model = train_model(X_train, y_train)
-    evaluate_model(model, X_test, y_test)
+    
+    # Define the models and their parameter grids
+    models_and_params = [
+        (RandomForestRegressor(random_state=42), {
+            'n_estimators': [100, 200],
+            'max_depth': [10, 20],
+            'min_samples_split': [2, 5]
+        }),
+        (GradientBoostingRegressor(random_state=42), {
+            'n_estimators': [100, 200],
+            'learning_rate': [0.1, 0.01],
+            'max_depth': [3, 5]
+        }),
+        (XGBRegressor(random_state=42), {
+            'n_estimators': [100, 200],
+            'learning_rate': [0.1, 0.01],
+            'max_depth': [3, 5]
+        })
+    ]
+    
+    # Train and evaluate each model individually
+    for model, param_grid in models_and_params:
+        print(f"Training and evaluating {type(model).__name__}")
+        train_and_evaluate_model(model, param_grid, X_train, y_train, X_test, y_test)
+        print("=" * 50)
 
 # Execute the main function
 file_path = './datasets/dataset-utf8.csv'
