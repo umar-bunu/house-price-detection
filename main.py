@@ -1,11 +1,10 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, VotingRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 import numpy as np
 from xgboost import XGBRegressor
-import seaborn as sns
 
 # Load and preprocess data
 def load_data(file_path):
@@ -61,13 +60,23 @@ def train_and_evaluate_model(model, param_grid, X_train, y_train, X_test, y_test
     
     # Evaluate the model on the test set
     y_pred = best_model.predict(X_test)
-    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-    print(f"Test RMSE for {type(model).__name__}:", rmse)
     
-    # Calculate the percentage of predictions within 25% of the actual values
+    # Calculating metrics
+    r2 = r2_score(y_test, y_pred)
+    mae = mean_absolute_error(y_test, y_pred)
+    mse = mean_squared_error(y_test, y_pred)
+    rmse = np.sqrt(mse)
     within_25_percent = np.abs((y_test - y_pred) / y_test) <= 0.25
     accuracy_within_25_percent = np.mean(within_25_percent)
+    error_rate = 1 - accuracy_within_25_percent
+    
+    # Printing metrics
+    print(f"Test R^2 for {type(model).__name__}: {r2}")
+    print(f"Test MAE for {type(model).__name__}: {mae}")
+    print(f"Test MSE for {type(model).__name__}: {mse}")
+    print(f"Test RMSE for {type(model).__name__}: {rmse}")
     print(f"Accuracy for {type(model).__name__}: {accuracy_within_25_percent * 100:.2f}%")
+    print(f"Error rate for {type(model).__name__}: {error_rate * 100:.2f}%")
     
     return best_model
 
